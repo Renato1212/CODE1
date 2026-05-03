@@ -1,0 +1,61 @@
+name: Deploy Raio-X Financeiro → GitHub Pages
+
+on:
+  push:
+    branches: [claude/cloud-browser-app-4zwVZ, master]
+    paths:
+      - 'raio-x-financeiro/**'
+      - '.github/workflows/deploy-raio-x.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: raio-x-financeiro/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: raio-x-financeiro
+
+      - name: Build
+        run: npm run build
+        working-directory: raio-x-financeiro
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: raio-x-financeiro/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
