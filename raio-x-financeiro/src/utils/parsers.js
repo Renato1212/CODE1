@@ -291,12 +291,19 @@ export function parseOFX(fileContent) {
 // ── Main entry point ───────────────────────────────────────────────────────
 
 export async function parseFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase()
+
+  // PDF: parsed with PDF.js (async, no FileReader needed)
+  if (ext === 'pdf') {
+    const { parsePDF } = await import('./pdfParser.js')
+    return parsePDF(file)
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
     reader.onload = (e) => {
       try {
         const content = e.target.result
-        const ext = file.name.split('.').pop().toLowerCase()
         let result
         if (ext === 'ofx' || ext === 'qfx') {
           result = parseOFX(content)

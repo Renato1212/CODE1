@@ -10,8 +10,8 @@ export default function UploadZone({ onFile, onDemo, loading }) {
   const handleFile = useCallback((file) => {
     setError(null)
     const ext = file.name.split('.').pop().toLowerCase()
-    if (!['csv', 'ofx', 'qfx', 'xls', 'xlsx'].includes(ext)) {
-      setError('Formato não suportado. Usa CSV, OFX ou QFX.')
+    if (!['csv', 'ofx', 'qfx', 'xls', 'xlsx', 'pdf'].includes(ext)) {
+      setError('Formato não suportado. Usa PDF, CSV, OFX ou QFX.')
       return
     }
     onFile(file)
@@ -94,7 +94,7 @@ export default function UploadZone({ onFile, onDemo, loading }) {
           <input
             ref={inputRef}
             type="file"
-            accept=".csv,.ofx,.qfx,.xls,.xlsx"
+            accept=".pdf,.csv,.ofx,.qfx,.xls,.xlsx"
             className="hidden"
             onChange={(e) => e.target.files[0] && handleFile(e.target.files[0])}
           />
@@ -131,8 +131,22 @@ export default function UploadZone({ onFile, onDemo, loading }) {
                     {dragging ? 'Larga para analisar' : 'Arrasta o extrato aqui'}
                   </p>
                   <p className="text-sm text-slate-500">
-                    CSV, OFX ou QFX · ou clica para escolher ficheiro
+                    PDF · CSV · OFX · QFX &nbsp;·&nbsp; ou clica para escolher ficheiro
                   </p>
+                  <div className="flex justify-center gap-2 mt-3">
+                    {['PDF', 'CSV', 'OFX', 'QFX'].map((fmt) => (
+                      <span
+                        key={fmt}
+                        className={`px-2 py-0.5 rounded text-xs font-bold tracking-wide border ${
+                          fmt === 'PDF'
+                            ? 'bg-violet-500/20 border-violet-500/40 text-violet-300'
+                            : 'bg-white/[0.04] border-white/10 text-slate-500'
+                        }`}
+                      >
+                        {fmt}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               </motion.div>
             )}
