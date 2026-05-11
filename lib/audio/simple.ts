@@ -41,6 +41,7 @@ export class SimpleAudio {
 
   play(side: "buy" | "sell", size: number) {
     if (!this.ctx || !this.limiter) return;
+    if (this.ctx.state === "suspended") { this.ctx.resume().catch(() => {}); }
     if (size > this.maxSize) this.maxSize = size;
     const ref = Math.max(this.maxSize, 1e-6);
     // Normalize size to [0, 1] log-scaled.
