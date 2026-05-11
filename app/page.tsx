@@ -1,99 +1,64 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { BinanceClient } from "@/lib/data/binance";
-import { useMarket } from "@/lib/store/marketStore";
-import { useSettings } from "@/lib/store/settingsStore";
-import { audioEngine } from "@/lib/audio/engine";
-import { AnalyticsEngine } from "@/lib/analytics/engine";
-import PriceHeader from "@/components/PriceHeader";
-import Mixer from "@/components/Mixer";
-import EventLog from "@/components/EventLog";
-import SizeHistogram from "@/components/SizeHistogram";
-import LargePrints from "@/components/LargePrints";
-import SoundLegend from "@/components/SoundLegend";
+import { simpleAudio } from "@/lib/audio/simple";
+import SideHistograms from "@/components/SideHistograms";
 
 const SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"];
+const MAX_TRADES = 500;
+
+interface UiTrade { side: "buy" | "sell"; size: number; ts: number; price: number; }
 
 export default function Page() {
   const [started, setStarted] = useState(false);
-  const [mixerOpen, setMixerOpen] = useState(true);
+  const [symbol, setSymbol] = useState("BTCUSDT");
+  const [trades, setTrades] = useState<UiTrade[]>([]);
+  const [status, setStatus] = useState<"connecting" | "open" | "closed" | "stale">("closed");
+  const [muted, setMuted] = useState(false);
+  const [volume, setVolume] = useState(0.7);
   const [err, setErr] = useState<string | null>(null);
-  const market = useMarket();
-  const settings = useSettings();
+  const [lastPrice, setLastPrice] = useState<number | null>(null);
   const clientRef = useRef<BinanceClient | null>(null);
-  const analyticsRef = useRef<AnalyticsEngine | null>(null);
-  const recvMapRef = useRef<Map<number, number>>(new Map());
 
-  // Push detector config when it changes
-  useEffect(() => {
-    analyticsRef.current?.setConfig(settings.detector);
-  }, [settings.detector]);
-
-  const onStart = async () => {
+  const start = async (sym: string) => {
     try {
-      await audioEngine.start();
-      audioEngine.onLatency = (ms) => useMarket.getState().setLatency(ms);
-      audioEngine.onSound = (info) => useMarket.getState().pushSound(info.layer, info.detail, info.ts);
+      await simpleAudio.start();
       setStarted(true);
-      startPipeline(market.symbol);
+      connect(sym);
     } catch (e: any) {
-      setErr(`Audio engine failed to start: ${e?.message ?? e}`);
+      setErr(`Audio failed: ${e?.message ?? e}`);
     }
   };
 
-  const startPipeline = (symbol: string) => {
-    try {
-      if (clientRef.current) clientRef.current.stop();
-      analyticsRef.current?.stop();
-      useMarket.getState().reset();
-
-      const analytics = new AnalyticsEngine({
-        onStats: (s) => {
-          useMarket.getState().setStats(s);
-          audioEngine.updateAmbient(s);
-        },
-        onTrade: (t) => {
-          const recv = recvMapRef.current.get(t.ts) ?? performance.now();
-          recvMapRef.current.delete(t.ts);
-          useMarket.getState().pushTrade(t);
-          audioEngine.playTrade(t, recv);
-        },
-        onEvent: (e) => {
-          useMarket.getState().pushEvent(e);
-          audioEngine.playEvent(e);
-        },
-      });
-      analytics.setConfig(settings.detector);
-      analytics.start();
-      analyticsRef.current = analytics;
-
-      const client = new BinanceClient(symbol, {
-        onStatus: (s) => useMarket.getState().setStatus(s),
-        onTrade: (t) => {
-          recvMapRef.current.set(t.ts, t.recvTs);
-          analytics.pushTrade(t);
-        },
-        onBook: (b) => analytics.pushBook(b),
-        onDepth: () => { /* reserved */ },
-      });
-      client.start();
-      clientRef.current = client;
-    } catch (e: any) {
-      setErr(`Pipeline error: ${e?.message ?? e}`);
-    }
-  };
-
-  const onChangeSymbol = (s: string) => {
-    useMarket.getState().setSymbol(s);
-    if (started) startPipeline(s);
-  };
-
-  useEffect(() => () => {
+  const connect = (sym: string) => {
     clientRef.current?.stop();
-    analyticsRef.current?.stop();
-  }, []);
+    setTrades([]);
+    setLastPrice(null);
+    const c = new BinanceClient(sym, {
+      onStatus: setStatus,
+      onTrade: (t) => {
+        simpleAudio.play(t.side, t.size);
+        setLastPrice(t.price);
+        setTrades(prev => {
+          const next = [...prev, { side: t.side, size: t.size, ts: t.ts, price: t.price }];
+          if (next.length > MAX_TRADES) next.splice(0, next.length - MAX_TRADES);
+          return next;
+        });
+      },
+      onBook: () => {},
+      onDepth: () => {},
+    });
+    c.start();
+    clientRef.current = c;
+  };
 
-  const status = market.status;
+  const onSymbol = (s: string) => {
+    setSymbol(s);
+    if (started) connect(s);
+  };
+
+  useEffect(() => () => clientRef.current?.stop(), []);
+
   const statusColor =
     status === "open" ? "bg-buy" :
     status === "connecting" ? "bg-yellow-500" :
@@ -104,12 +69,14 @@ export default function Page() {
       <div className="min-h-screen flex items-center justify-center p-6">
         <div className="panel p-8 max-w-xl text-center space-y-4">
           <h1 className="text-4xl font-bold text-accent">TapeFeel</h1>
-          <p className="text-muted">Multi-layer audio sonification of Binance USDT-M perp order flow.</p>
-          <p className="text-xs text-muted">
-            Stereo: buys right (+0.7), sells left (−0.7). Size-tiered timbres adapt to the live 5-minute distribution.
-            Four independent layers: tape, flow events, ambient drone, speech.
-          </p>
-          <button onClick={onStart} className="btn btn-active text-base px-6 py-3">Start (engage audio)</button>
+          <p className="text-muted">Hear every Binance USDT-M perp market order.</p>
+          <ul className="text-xs text-muted text-left list-disc pl-6 space-y-1">
+            <li>Buy market orders → bright triangle, panned right (+0.7)</li>
+            <li>Sell market orders → dark sawtooth, panned left (−0.7)</li>
+            <li>Larger order → higher pitch (log-scaled, auto-calibrated)</li>
+            <li>Side-by-side histograms of recent buy vs sell order sizes</li>
+          </ul>
+          <button onClick={() => start(symbol)} className="btn btn-active text-base px-6 py-3">Start</button>
           <p className="text-[10px] text-muted">Headphones recommended. Click required by browser autoplay policy.</p>
           {err && <p className="text-xs text-sell">{err}</p>}
         </div>
@@ -117,11 +84,14 @@ export default function Page() {
     );
   }
 
+  const totalBuy = trades.filter(t => t.side === "buy").length;
+  const totalSell = trades.filter(t => t.side === "sell").length;
+
   return (
-    <div className="min-h-screen flex flex-col">
-      <header className="panel m-3 mb-0 p-2 flex items-center gap-3 text-xs flex-wrap">
+    <div className="min-h-screen flex flex-col gap-3 p-3">
+      <header className="panel p-3 flex items-center gap-4 text-xs flex-wrap">
         <span className="text-lg font-bold text-accent">TapeFeel</span>
-        <select value={market.symbol} onChange={e => onChangeSymbol(e.target.value)}
+        <select value={symbol} onChange={e => onSymbol(e.target.value)}
                 className="bg-panel2 border border-border rounded px-2 py-1">
           {SYMBOLS.map(s => <option key={s} value={s}>{s}</option>)}
         </select>
@@ -129,23 +99,49 @@ export default function Page() {
           <span className={`dot ${statusColor}`} />
           <span className="text-muted">{status}</span>
         </div>
-        <div className="text-muted">latency: <span className={market.latencyMs < 50 ? "text-buy" : "text-sell"}>{market.latencyMs.toFixed(1)}ms</span></div>
-        {err && <div className="text-sell">{err}</div>}
+        <div className="text-muted">price <span className="text-text tabular-nums">{lastPrice?.toFixed(2) ?? "—"}</span></div>
+        <div className="text-muted">trades <span className="text-text tabular-nums">{trades.length}</span></div>
         <div className="ml-auto flex items-center gap-2">
-          <SoundLegend />
-          <button className="btn" onClick={() => setMixerOpen(v => !v)}>{mixerOpen ? "hide mixer" : "show mixer"}</button>
+          <label className="text-muted">vol</label>
+          <input type="range" min={0} max={1} step={0.01} value={volume}
+                 onChange={e => { const v = +e.target.value; setVolume(v); simpleAudio.setVolume(v); }} />
+          <button className={`btn ${muted ? "btn-active" : ""}`}
+                  onClick={() => { const m = !muted; setMuted(m); simpleAudio.setMuted(m); }}>
+            {muted ? "MUTED" : "MUTE"}
+          </button>
         </div>
       </header>
 
-      <main className="flex-1 grid gap-3 p-3" style={{ gridTemplateColumns: mixerOpen ? "260px 1fr 320px" : "1fr 320px" }}>
-        {mixerOpen && <aside><Mixer /></aside>}
-        <section className="space-y-3 min-w-0">
-          <PriceHeader />
-          <SizeHistogram />
-          <LargePrints />
-        </section>
-        <aside><EventLog /></aside>
-      </main>
+      <SideHistograms trades={trades} bins={14} />
+
+      <div className="grid grid-cols-2 gap-3 text-xs">
+        <div className="panel p-3">
+          <div className="text-buy mb-1">recent BUYS ({totalBuy})</div>
+          <div className="space-y-[2px] max-h-40 overflow-auto scrollbar-thin">
+            {trades.filter(t => t.side === "buy").slice(-15).reverse().map((t, i) => (
+              <div key={i} className="flex justify-between">
+                <span className="tabular-nums">{t.size.toFixed(4)}</span>
+                <span className="tabular-nums text-muted">@ {t.price.toFixed(2)}</span>
+                <span className="text-muted">{new Date(t.ts).toLocaleTimeString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="panel p-3">
+          <div className="text-sell mb-1">recent SELLS ({totalSell})</div>
+          <div className="space-y-[2px] max-h-40 overflow-auto scrollbar-thin">
+            {trades.filter(t => t.side === "sell").slice(-15).reverse().map((t, i) => (
+              <div key={i} className="flex justify-between">
+                <span className="tabular-nums">{t.size.toFixed(4)}</span>
+                <span className="tabular-nums text-muted">@ {t.price.toFixed(2)}</span>
+                <span className="text-muted">{new Date(t.ts).toLocaleTimeString()}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {err && <div className="text-xs text-sell">{err}</div>}
     </div>
   );
 }
