@@ -18,7 +18,10 @@ export default function Page() {
   const [volume, setVolume] = useState(0.7);
   const [err, setErr] = useState<string | null>(null);
   const [lastPrice, setLastPrice] = useState<number | null>(null);
+  const [msgCount, setMsgCount] = useState(0);
+  const [lastDebug, setLastDebug] = useState<string>("");
   const clientRef = useRef<BinanceClient | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const start = async (sym: string) => {
     try {
@@ -34,8 +37,10 @@ export default function Page() {
     clientRef.current?.stop();
     setTrades([]);
     setLastPrice(null);
+    setMsgCount(0);
     const c = new BinanceClient(sym, {
       onStatus: setStatus,
+      onDebug: (m) => setLastDebug(m),
       onTrade: (t) => {
         simpleAudio.play(t.side, t.size);
         setLastPrice(t.price);
@@ -45,11 +50,15 @@ export default function Page() {
           return next;
         });
       },
-      onBook: () => {},
-      onDepth: () => {},
     });
     c.start();
     clientRef.current = c;
+    // Poll the client's internal counters so msgCount appears in the UI
+    // even before the first parsable trade lands.
+    if (tickRef.current) clearInterval(tickRef.current);
+    tickRef.current = setInterval(() => {
+      setMsgCount(c.msgCount);
+    }, 500);
   };
 
   const onSymbol = (s: string) => {
@@ -57,7 +66,10 @@ export default function Page() {
     if (started) connect(s);
   };
 
-  useEffect(() => () => clientRef.current?.stop(), []);
+  useEffect(() => () => {
+    clientRef.current?.stop();
+    if (tickRef.current) clearInterval(tickRef.current);
+  }, []);
 
   const statusColor =
     status === "open" ? "bg-buy" :
@@ -101,6 +113,7 @@ export default function Page() {
         </div>
         <div className="text-muted">price <span className="text-text tabular-nums">{lastPrice?.toFixed(2) ?? "—"}</span></div>
         <div className="text-muted">trades <span className="text-text tabular-nums">{trades.length}</span></div>
+        <div className="text-muted">msgs <span className="text-text tabular-nums">{msgCount}</span></div>
         <div className="ml-auto flex items-center gap-2">
           <label className="text-muted">vol</label>
           <input type="range" min={0} max={1} step={0.01} value={volume}
@@ -111,6 +124,8 @@ export default function Page() {
           </button>
         </div>
       </header>
+
+      {lastDebug && <div className="text-[10px] text-muted px-1 break-all">debug: {lastDebug}</div>}
 
       <SideHistograms trades={trades} bins={14} />
 

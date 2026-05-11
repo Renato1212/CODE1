@@ -1,12 +1,13 @@
-import type { Trade, BookTicker, DepthSnapshot } from "@/lib/types";
+import type { Trade } from "@/lib/types";
 
 export interface BinanceHandlers {
   onTrade: (t: Trade) => void;
-  onBook: (b: BookTicker) => void;
-  onDepth: (d: DepthSnapshot) => void;
   onStatus: (s: "connecting" | "open" | "closed" | "stale") => void;
+  onDebug?: (msg: string) => void;
 }
 
+// Single-stream client for aggregate trades. Uses the raw /ws/<stream>
+// endpoint which is simpler and more reliable on mobile than combined streams.
 export class BinanceClient {
   private ws: WebSocket | null = null;
   private symbol: string;
@@ -15,6 +16,9 @@ export class BinanceClient {
   private lastMsg = 0;
   private staleTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
+  msgCount = 0;
+  errorCount = 0;
+  lastError = "";
 
   constructor(symbol: string, handlers: BinanceHandlers) {
     this.symbol = symbol.toLowerCase();
@@ -25,7 +29,7 @@ export class BinanceClient {
     this.closed = false;
     this.connect();
     this.staleTimer = setInterval(() => {
-      if (this.ws && this.ws.readyState === WebSocket.OPEN && Date.now() - this.lastMsg > 10_000) {
+      if (this.ws && this.ws.readyState === WebSocket.OPEN && Date.now() - this.lastMsg > 15_000) {
         this.h.onStatus("stale");
         try { this.ws.close(); } catch {}
       }
@@ -35,74 +39,85 @@ export class BinanceClient {
   stop() {
     this.closed = true;
     if (this.staleTimer) clearInterval(this.staleTimer);
-    if (this.ws) {
-      try { this.ws.close(); } catch {}
-      this.ws = null;
-    }
+    if (this.ws) { try { this.ws.close(); } catch {} this.ws = null; }
   }
+
+  private debug(m: string) { this.h.onDebug?.(m); }
 
   private connect() {
     if (this.closed) return;
-    const s = this.symbol;
-    const url = `wss://fstream.binance.com/stream?streams=${s}@aggTrade/${s}@bookTicker/${s}@depth20@100ms`;
+    const url = `wss://fstream.binance.com/ws/${this.symbol}@aggTrade`;
+    this.debug(`connecting ${url}`);
     this.h.onStatus("connecting");
-    const ws = new WebSocket(url);
+
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(url);
+    } catch (e: any) {
+      this.lastError = `ctor: ${e?.message ?? e}`;
+      this.debug(this.lastError);
+      this.scheduleReconnect();
+      return;
+    }
     this.ws = ws;
 
     ws.onopen = () => {
       this.backoff = 1000;
       this.lastMsg = Date.now();
+      this.debug("open");
       this.h.onStatus("open");
     };
 
     ws.onmessage = (ev) => {
       this.lastMsg = Date.now();
+      this.msgCount++;
       const recvTs = performance.now();
-      let msg: any;
-      try { msg = JSON.parse(ev.data); } catch { return; }
-      const data = msg.data;
-      if (!data) return;
-      const stream: string = msg.stream || "";
 
-      if (stream.endsWith("@aggTrade")) {
-        const price = parseFloat(data.p);
-        const size = parseFloat(data.q);
-        const side = data.m ? "sell" : "buy";
-        this.h.onTrade({
-          ts: data.T,
-          recvTs,
-          price,
-          size,
-          side,
-          symbol: this.symbol.toUpperCase(),
-        });
-      } else if (stream.endsWith("@bookTicker")) {
-        this.h.onBook({
-          ts: data.E ?? Date.now(),
-          bid: parseFloat(data.b),
-          bidSize: parseFloat(data.B),
-          ask: parseFloat(data.a),
-          askSize: parseFloat(data.A),
-        });
-      } else if (stream.includes("@depth20")) {
-        this.h.onDepth({
-          ts: data.E ?? Date.now(),
-          bids: (data.b || []).map((l: string[]) => ({ price: parseFloat(l[0]), size: parseFloat(l[1]) })),
-          asks: (data.a || []).map((l: string[]) => ({ price: parseFloat(l[0]), size: parseFloat(l[1]) })),
-        });
-      }
+      const handleString = (s: string) => {
+        let msg: any;
+        try { msg = JSON.parse(s); } catch (e: any) {
+          this.errorCount++;
+          this.lastError = `parse: ${e?.message ?? e}`;
+          return;
+        }
+        // Raw stream returns the aggTrade object directly (no envelope).
+        // Combined stream wraps it as {stream, data}; support both.
+        const data = msg.data ?? msg;
+        if (data && data.e === "aggTrade" && data.p && data.q) {
+          this.h.onTrade({
+            ts: data.T ?? data.E ?? Date.now(),
+            recvTs,
+            price: parseFloat(data.p),
+            size: parseFloat(data.q),
+            side: data.m ? "sell" : "buy",
+            symbol: this.symbol.toUpperCase(),
+          });
+        }
+      };
+
+      const d = ev.data;
+      if (typeof d === "string") handleString(d);
+      else if (d instanceof Blob) d.text().then(handleString);
+      else if (d instanceof ArrayBuffer) handleString(new TextDecoder().decode(d));
     };
 
-    ws.onclose = () => {
+    ws.onerror = (e: any) => {
+      this.errorCount++;
+      this.lastError = `error: ${e?.message ?? "ws error"}`;
+      this.debug(this.lastError);
+    };
+
+    ws.onclose = (e) => {
+      this.debug(`close code=${e.code} reason=${e.reason || "—"}`);
       this.h.onStatus("closed");
       if (this.closed) return;
-      const wait = Math.min(this.backoff, 30_000);
-      this.backoff = Math.min(this.backoff * 2, 30_000);
-      setTimeout(() => this.connect(), wait);
+      this.scheduleReconnect();
     };
+  }
 
-    ws.onerror = () => {
-      try { ws.close(); } catch {}
-    };
+  private scheduleReconnect() {
+    const wait = Math.min(this.backoff, 30_000);
+    this.backoff = Math.min(this.backoff * 2, 30_000);
+    setTimeout(() => this.connect(), wait);
   }
 }
