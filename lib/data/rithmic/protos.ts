@@ -14,6 +14,23 @@ const root = protobuf.Root.fromJSON({
           fields: { template_id: { type: "int32", id: 154467 } },
         },
 
+        RequestRithmicSystemInfo: {
+          fields: {
+            template_id: { type: "int32", id: 154467 },           // = 16
+            user_msg: { rule: "repeated", type: "string", id: 132760 },
+          },
+        },
+
+        ResponseRithmicSystemInfo: {
+          fields: {
+            template_id: { type: "int32", id: 154467 },           // = 17
+            user_msg: { rule: "repeated", type: "string", id: 132760 },
+            rp_code: { rule: "repeated", type: "string", id: 132016 },
+            system_name: { rule: "repeated", type: "string", id: 132017 },
+            has_aggregated_quotes: { rule: "repeated", type: "bool", id: 132018 },
+          },
+        },
+
         RequestLogin: {
           fields: {
             template_id: { type: "int32", id: 154467 },           // = 10
@@ -112,6 +129,8 @@ const root = protobuf.Root.fromJSON({
 });
 
 export const Envelope = root.lookupType("rithmic.Envelope");
+export const RequestRithmicSystemInfo = root.lookupType("rithmic.RequestRithmicSystemInfo");
+export const ResponseRithmicSystemInfo = root.lookupType("rithmic.ResponseRithmicSystemInfo");
 export const RequestLogin = root.lookupType("rithmic.RequestLogin");
 export const ResponseLogin = root.lookupType("rithmic.ResponseLogin");
 export const RequestHeartbeat = root.lookupType("rithmic.RequestHeartbeat");
@@ -122,6 +141,8 @@ export const LastTrade = root.lookupType("rithmic.LastTrade");
 export const BestBidOffer = root.lookupType("rithmic.BestBidOffer");
 
 export const TEMPLATE = {
+  RequestRithmicSystemInfo: 16,
+  ResponseRithmicSystemInfo: 17,
   RequestLogin: 10,
   ResponseLogin: 11,
   RequestHeartbeat: 18,

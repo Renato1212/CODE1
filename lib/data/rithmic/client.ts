@@ -1,7 +1,9 @@
 import type { Trade } from "@/lib/types";
 import type * as protobuf from "protobufjs";
 import {
-  Envelope, RequestLogin, ResponseLogin,
+  Envelope,
+  RequestRithmicSystemInfo, ResponseRithmicSystemInfo,
+  RequestLogin, ResponseLogin,
   RequestHeartbeat,
   RequestMarketDataUpdate, ResponseMarketDataUpdate,
   LastTrade, BestBidOffer,
@@ -48,6 +50,7 @@ export class RithmicClient {
   msgCount = 0;
   errorCount = 0;
   lastError = "";
+  rawLog: string[] = [];
   private nbbo = new Map<string, { bid?: number; ask?: number; lastSide?: "buy" | "sell" }>();
 
   constructor(creds: RithmicCredentials, sub: RithmicSubscription, h: RithmicHandlers) {
@@ -69,7 +72,19 @@ export class RithmicClient {
     }
   }
 
-  private debug(s: string) { this.h.onDebug?.(s); }
+  private debug(s: string) {
+    const line = `${new Date().toISOString().substr(11, 12)} ${s}`;
+    this.rawLog.push(line);
+    if (this.rawLog.length > 500) this.rawLog.shift();
+    this.h.onDebug?.(s);
+  }
+
+  private hex(buf: Uint8Array, max = 96): string {
+    const n = Math.min(buf.length, max);
+    let out = "";
+    for (let i = 0; i < n; i++) out += buf[i].toString(16).padStart(2, "0");
+    return out + (buf.length > max ? `…(+${buf.length - max}B)` : "");
+  }
 
   private connect() {
     if (this.closed) return;
@@ -90,9 +105,11 @@ export class RithmicClient {
 
     ws.onopen = () => {
       this.backoff = 1000;
-      this.debug("[rithmic] socket open, sending login");
+      this.debug("[rithmic] socket open — requesting system info first");
       this.h.onStatus("open");
-      this.sendLogin();
+      // Canonical Rithmic handshake: ask the gateway which systems are reachable,
+      // THEN log in. Some gateways close with permission_denied if we skip this.
+      this.send(RequestRithmicSystemInfo, { template_id: TEMPLATE.RequestRithmicSystemInfo });
     };
     ws.onmessage = (ev) => {
       this.msgCount++;
@@ -100,6 +117,8 @@ export class RithmicClient {
                 : typeof ev.data === "string" ? new TextEncoder().encode(ev.data)
                 : null;
       if (!buf) return;
+      this.rawLog.push(`RX#${this.msgCount} len=${buf.length} hex=${this.hex(buf)}`);
+      if (this.rawLog.length > 500) this.rawLog.shift();
       this.dispatch(buf);
     };
     ws.onerror = () => {
@@ -130,6 +149,8 @@ export class RithmicClient {
     const err = type.verify(message);
     if (err) { this.debug(`[rithmic] verify error: ${err}`); return; }
     const buf = type.encode(type.create(message)).finish();
+    const u8 = new Uint8Array(buf);
+    this.rawLog.push(`TX ${type.name} tid=${message.template_id} len=${u8.length} hex=${this.hex(u8)}`);
     this.ws.send(buf);
   }
 
@@ -181,6 +202,19 @@ export class RithmicClient {
     }
     try {
       switch (tid) {
+        case TEMPLATE.ResponseRithmicSystemInfo: {
+          const m: any = ResponseRithmicSystemInfo.decode(buf);
+          const systems = (m.system_name ?? []).join(", ");
+          const rp = m.rp_code ?? [];
+          this.debug(`[rithmic] systems available: [${systems}] rp=[${rp.join(",")}]`);
+          if (rp.length === 0 || rp[0] === "0") {
+            this.sendLogin();
+          } else {
+            this.lastError = `system_info denied: rp=${rp.join(",")}`;
+            try { this.ws?.close(); } catch {}
+          }
+          break;
+        }
         case TEMPLATE.ResponseLogin: {
           const m: any = ResponseLogin.decode(buf);
           const rp = m.rp_code ?? [];
