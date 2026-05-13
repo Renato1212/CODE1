@@ -12,7 +12,7 @@ import {
 import { simpleAudio } from "@/lib/audio/simple";
 import PriceLadder from "@/components/PriceLadder";
 
-const BUILD = "v6-rithmic-providers-2026-05-11";
+const BUILD = "v7-rithmic-appname-2026-05-11";
 const SOURCES: { value: FeedSource; label: string }[] = [
   { value: "binance", label: "Binance Futures (crypto)" },
   { value: "coinbase", label: "Coinbase Spot (crypto)" },
@@ -29,6 +29,8 @@ interface RithmicLogin {
   provider: RithmicProvider;
   gateway: RithmicGateway;
   system: string;
+  appName: string;
+  appVersion: string;
   user: string;
   password: string;
   exchange: string;
@@ -57,6 +59,7 @@ function blankRithmic(): RithmicLogin {
   return {
     provider: "rithmic-paper",
     gateway: p.gateway, system: p.system,
+    appName: p.appName, appVersion: p.appVersion,
     user: "", password: "",
     exchange: "CME", contract: "",
     mode: "direct", bridgeUrl: "",
@@ -166,7 +169,11 @@ export default function Page() {
         }
         setErr(null);
         const r = new RithmicClient(
-          { gateway: rithmic.gateway, system: rithmic.system, user: rithmic.user, password: rithmic.password },
+          {
+            gateway: rithmic.gateway, system: rithmic.system,
+            user: rithmic.user, password: rithmic.password,
+            appName: rithmic.appName, appVersion: rithmic.appVersion,
+          },
           { symbol: contract, exchange: rithmic.exchange },
           { onStatus: setStatus, onDebug: setLastDebug, onTrade: handleTrade },
         );
@@ -377,7 +384,11 @@ function RithmicLoginCard({
   const set = (patch: Partial<RithmicLogin>) => setRithmic({ ...rithmic, ...patch });
   const onProvider = (p: RithmicProvider) => {
     const preset = RITHMIC_PROVIDERS[p];
-    set({ provider: p, gateway: preset.gateway, system: preset.system });
+    set({
+      provider: p,
+      gateway: preset.gateway, system: preset.system,
+      appName: preset.appName, appVersion: preset.appVersion,
+    });
   };
   const onUserChange = (v: string) => {
     const next: Partial<RithmicLogin> = { user: v };
@@ -390,6 +401,8 @@ function RithmicLoginCard({
         next.provider = guess;
         next.gateway = preset.gateway;
         next.system = preset.system;
+        next.appName = preset.appName;
+        next.appVersion = preset.appVersion;
       }
     }
     setRithmic({ ...rithmic, ...next });
@@ -450,6 +463,20 @@ function RithmicLoginCard({
                 <input value={rithmic.system} onChange={e => set({ system: e.target.value })}
                        className="bg-bg border border-border rounded px-2 py-1 w-full" />
               </Row>
+              <Row label="App name">
+                <input value={rithmic.appName} onChange={e => set({ appName: e.target.value })}
+                       placeholder="Lucid Trading"
+                       className="bg-bg border border-border rounded px-2 py-1 w-full font-mono" />
+              </Row>
+              <Row label="App version">
+                <input value={rithmic.appVersion} onChange={e => set({ appVersion: e.target.value })}
+                       className="bg-bg border border-border rounded px-2 py-1 w-full font-mono" />
+              </Row>
+              <p className="text-[10px] text-muted">
+                Rithmic only accepts logins from app names allowlisted for your system. If you get
+                "permission denied" (close 1011), try alternates like "R | Trader Pro",
+                "Rithmic Test", "Quantower", or your platform's exact name.
+              </p>
               <Row label="Exchange">
                 <select value={rithmic.exchange} onChange={e => set({ exchange: e.target.value })}
                         className="bg-bg border border-border rounded px-2 py-1">
