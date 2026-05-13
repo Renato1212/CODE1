@@ -5,10 +5,14 @@ import {
   CRYPTO_SYMBOLS, CME_SYMBOLS, SYMBOL_LABELS,
 } from "@/lib/data/feeds";
 import { RithmicClient, type RithmicGateway } from "@/lib/data/rithmic/client";
+import {
+  RITHMIC_PROVIDERS, guessProviderFromUser, guessFrontMonth,
+  type RithmicProvider,
+} from "@/lib/data/rithmic/providers";
 import { simpleAudio } from "@/lib/audio/simple";
 import PriceLadder from "@/components/PriceLadder";
 
-const BUILD = "v5-rithmic-direct-2026-05-11";
+const BUILD = "v6-rithmic-providers-2026-05-11";
 const SOURCES: { value: FeedSource; label: string }[] = [
   { value: "binance", label: "Binance Futures (crypto)" },
   { value: "coinbase", label: "Coinbase Spot (crypto)" },
@@ -22,12 +26,13 @@ const IMBALANCE_COOLDOWN_MS = 4000;
 interface UiTrade { side: "buy" | "sell"; size: number; ts: number; price: number; }
 
 interface RithmicLogin {
+  provider: RithmicProvider;
   gateway: RithmicGateway;
   system: string;
   user: string;
   password: string;
   exchange: string;
-  contract: string;        // e.g. "ESM6" — full Rithmic contract code
+  contract: string;
   mode: "direct" | "bridge";
   bridgeUrl: string;
 }
@@ -42,21 +47,19 @@ function defaultSymbol(src: FeedSource): string {
 function loadRithmic(): RithmicLogin {
   if (typeof window === "undefined") return blankRithmic();
   try {
-    const raw = localStorage.getItem("tapefeel:rithmic2");
+    const raw = localStorage.getItem("tapefeel:rithmic3");
     if (raw) return { ...blankRithmic(), ...JSON.parse(raw) };
   } catch {}
   return blankRithmic();
 }
 function blankRithmic(): RithmicLogin {
+  const p = RITHMIC_PROVIDERS["rithmic-paper"];
   return {
-    gateway: "test",
-    system: "Rithmic Paper Trading",
-    user: "",
-    password: "",
-    exchange: "CME",
-    contract: "",
-    mode: "direct",
-    bridgeUrl: "",
+    provider: "rithmic-paper",
+    gateway: p.gateway, system: p.system,
+    user: "", password: "",
+    exchange: "CME", contract: "",
+    mode: "direct", bridgeUrl: "",
   };
 }
 
@@ -86,8 +89,12 @@ export default function Page() {
   const rollingDeltaRef = useRef<{ buyVol: number; sellVol: number; ts: number }[]>([]);
 
   useEffect(() => {
-    try { localStorage.setItem("tapefeel:rithmic2", JSON.stringify(rithmic)); } catch {}
+    try { localStorage.setItem("tapefeel:rithmic3", JSON.stringify(rithmic)); } catch {}
   }, [rithmic]);
+
+  const resolveContract = (): string => {
+    return rithmic.contract.trim() || guessFrontMonth(symbol);
+  };
 
   const start = async () => {
     try {
@@ -150,7 +157,7 @@ export default function Page() {
     rollingDeltaRef.current = [];
 
     if (src === "rithmic") {
-      const contract = rithmic.contract.trim() || sym;
+      const contract = rithmic.contract.trim() || guessFrontMonth(sym);
       if (rithmic.mode === "direct") {
         if (!rithmic.user || !rithmic.password) {
           setErr("Rithmic user / password required.");
@@ -177,7 +184,6 @@ export default function Page() {
           setShowRithmicCfg(true);
           return;
         }
-        // Fall through to bridge via FeedClient
       }
     }
     setErr(null);
@@ -242,11 +248,12 @@ export default function Page() {
 
   if (!started) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-6">
-        <div className="panel p-8 max-w-2xl w-full space-y-4">
-          <h1 className="text-4xl font-bold text-accent text-center">TapeFeel</h1>
-          <p className="text-muted text-center">Live order-flow audio + price ladder.</p>
-          <div className="text-xs text-muted space-y-3">
+      <div className="min-h-screen flex items-center justify-center p-4">
+        <div className="panel p-6 max-w-2xl w-full space-y-4">
+          <h1 className="text-3xl font-bold text-accent text-center">TapeFeel</h1>
+          <p className="text-xs text-muted text-center">Live order-flow audio + price ladder.</p>
+
+          <div className="space-y-3 text-xs">
             <Row label="Source">
               <select value={source} onChange={e => { const s = e.target.value as FeedSource; setSource(s); setSymbol(defaultSymbol(s)); }}
                       className="bg-panel2 border border-border rounded px-2 py-1 w-full">
@@ -259,12 +266,18 @@ export default function Page() {
                 {symbols.map(s => <option key={s} value={s}>{SYMBOL_LABELS[s] ?? s}</option>)}
               </select>
             </Row>
-            {source === "rithmic" && <RithmicLoginForm rithmic={rithmic} setRithmic={setRithmic} />}
           </div>
-          <div className="text-center">
-            <button onClick={start} className="btn btn-active text-base px-6 py-3">Start</button>
+
+          {source === "rithmic" && (
+            <RithmicLoginCard rithmic={rithmic} setRithmic={setRithmic} symbol={symbol} />
+          )}
+
+          <div className="text-center pt-2">
+            <button onClick={start} className="btn btn-active text-base px-8 py-3">
+              {source === "rithmic" ? "Connect & Start" : "Start"}
+            </button>
           </div>
-          <p className="text-[10px] text-muted text-center">Headphones recommended. Build: {BUILD}</p>
+          <p className="text-[10px] text-muted text-center">Build: {BUILD}</p>
           {err && <p className="text-xs text-sell text-center">{err}</p>}
         </div>
       </div>
@@ -328,18 +341,19 @@ export default function Page() {
 
       {showRithmicCfg && source === "rithmic" && (
         <div className="panel p-3">
-          <RithmicLoginForm rithmic={rithmic} setRithmic={setRithmic} />
+          <RithmicLoginCard rithmic={rithmic} setRithmic={setRithmic} symbol={symbol} />
           <div className="pt-2">
             <button className="btn btn-active" onClick={() => { setShowRithmicCfg(false); connect(source, symbol); }}>
               Save & reconnect
             </button>
-            <span className="text-[10px] text-muted ml-2">Stored in localStorage on this device only.</span>
           </div>
         </div>
       )}
 
       {source === "rithmic" && symbol && SYMBOL_LABELS[symbol] && (
-        <div className="text-[11px] text-muted px-2">{SYMBOL_LABELS[symbol]}{rithmic.contract ? ` · contract ${rithmic.contract}` : ""}</div>
+        <div className="text-[11px] text-muted px-2">
+          {SYMBOL_LABELS[symbol]} · contract <span className="text-accent">{rithmic.contract || guessFrontMonth(symbol)}</span> on {rithmic.exchange}
+        </div>
       )}
 
       {status === "open" && msgCount === 0 && source !== "rithmic" && (
@@ -357,88 +371,121 @@ export default function Page() {
   );
 }
 
-function RithmicLoginForm({ rithmic, setRithmic }: { rithmic: RithmicLogin; setRithmic: (r: RithmicLogin) => void }) {
+function RithmicLoginCard({
+  rithmic, setRithmic, symbol,
+}: { rithmic: RithmicLogin; setRithmic: (r: RithmicLogin) => void; symbol: string; }) {
   const set = (patch: Partial<RithmicLogin>) => setRithmic({ ...rithmic, ...patch });
+  const onProvider = (p: RithmicProvider) => {
+    const preset = RITHMIC_PROVIDERS[p];
+    set({ provider: p, gateway: preset.gateway, system: preset.system });
+  };
+  const onUserChange = (v: string) => {
+    const next: Partial<RithmicLogin> = { user: v };
+    // Auto-detect provider from username prefix the first time, only if currently
+    // on the default Rithmic Paper preset (so we don't override a manual pick).
+    if (rithmic.provider === "rithmic-paper") {
+      const guess = guessProviderFromUser(v);
+      if (guess) {
+        const preset = RITHMIC_PROVIDERS[guess];
+        next.provider = guess;
+        next.gateway = preset.gateway;
+        next.system = preset.system;
+      }
+    }
+    setRithmic({ ...rithmic, ...next });
+  };
+  const front = rithmic.contract || guessFrontMonth(symbol);
+  const presetHint = RITHMIC_PROVIDERS[rithmic.provider]?.hint;
+
   return (
-    <div className="space-y-2 text-left">
-      <div className="text-accent font-bold text-xs">Rithmic login</div>
-      <p className="text-[11px] text-muted">
-        Connects in-browser to Rithmic's WebSocket gateway (Protocol Buffers).
-        You need a free paper-trading account at <a className="underline" href="https://yyy3.rithmic.com" target="_blank" rel="noreferrer">yyy3.rithmic.com</a> and the MSPA accepted in R-Trader.
-      </p>
-      <Row label="Mode">
-        <select value={rithmic.mode} onChange={e => set({ mode: e.target.value as "direct" | "bridge" })}
-                className="bg-panel2 border border-border rounded px-2 py-1">
-          <option value="direct">Direct (browser → Rithmic WSS)</option>
-          <option value="bridge">Bridge (local relay)</option>
-        </select>
+    <div className="border border-border rounded p-4 bg-panel2 space-y-3 text-xs">
+      <div className="flex items-center justify-between">
+        <div className="text-accent font-bold text-sm">⚡ Connect to Rithmic</div>
+        <span className="text-[10px] text-muted">stored on this device · localStorage</span>
+      </div>
+
+      <div className="grid grid-cols-2 gap-2">
+        {(Object.keys(RITHMIC_PROVIDERS) as RithmicProvider[]).map(p => (
+          <button key={p}
+                  className={`btn text-left ${rithmic.provider === p ? "btn-active" : ""}`}
+                  onClick={() => onProvider(p)}>
+            {RITHMIC_PROVIDERS[p].label}
+          </button>
+        ))}
+      </div>
+      {presetHint && <p className="text-[10px] text-muted">{presetHint}</p>}
+
+      <Row label="Username">
+        <input value={rithmic.user} onChange={e => onUserChange(e.target.value)}
+               placeholder="e.g. LT-L4X9J9X3"
+               className="bg-bg border border-border rounded px-2 py-2 w-full font-mono" />
       </Row>
-      {rithmic.mode === "direct" ? (
-        <>
-          <Row label="Gateway">
-            <select value={rithmic.gateway} onChange={e => set({ gateway: e.target.value as RithmicGateway })}
-                    className="bg-panel2 border border-border rounded px-2 py-1">
-              <option value="test">Test / Paper (rprotocol-mobile)</option>
-              <option value="chicago">Chicago (rprotocol)</option>
-              <option value="europe">Europe (rprotocol-europe)</option>
+      <Row label="Password">
+        <input type="password" value={rithmic.password} onChange={e => set({ password: e.target.value })}
+               placeholder="••••••••••••"
+               className="bg-bg border border-border rounded px-2 py-2 w-full font-mono" />
+      </Row>
+
+      <details className="text-muted">
+        <summary className="cursor-pointer select-none">Advanced (system / gateway / contract / mode)</summary>
+        <div className="space-y-2 pt-2">
+          <Row label="Mode">
+            <select value={rithmic.mode} onChange={e => set({ mode: e.target.value as "direct" | "bridge" })}
+                    className="bg-bg border border-border rounded px-2 py-1">
+              <option value="direct">Direct (browser → Rithmic WSS)</option>
+              <option value="bridge">Bridge (local relay)</option>
             </select>
           </Row>
-          <Row label="System">
-            <input value={rithmic.system} onChange={e => set({ system: e.target.value })}
-                   placeholder="Rithmic Paper Trading"
-                   className="bg-panel2 border border-border rounded px-2 py-1 w-full" />
-          </Row>
-          <Row label="User">
-            <input value={rithmic.user} onChange={e => set({ user: e.target.value })}
-                   className="bg-panel2 border border-border rounded px-2 py-1 w-full" />
-          </Row>
-          <Row label="Password">
-            <input type="password" value={rithmic.password} onChange={e => set({ password: e.target.value })}
-                   className="bg-panel2 border border-border rounded px-2 py-1 w-full" />
-          </Row>
-          <Row label="Exchange">
-            <select value={rithmic.exchange} onChange={e => set({ exchange: e.target.value })}
-                    className="bg-panel2 border border-border rounded px-2 py-1">
-              {["CME", "CBOT", "NYMEX", "COMEX"].map(x => <option key={x} value={x}>{x}</option>)}
-            </select>
-          </Row>
-          <Row label="Contract">
-            <input value={rithmic.contract} onChange={e => set({ contract: e.target.value })}
-                   placeholder="ESM6 (root + month letter + year digit)"
-                   className="bg-panel2 border border-border rounded px-2 py-1 w-full" />
-          </Row>
-          <p className="text-[10px] text-muted">
-            Rithmic needs the exact contract code, not just the root. Month codes: H=Mar, M=Jun, U=Sep, Z=Dec for equity indices; F/G/J/K/N/Q/V/X/Z for energy &amp; metals. e.g. ESM6 = E-mini S&amp;P June 2026.
-          </p>
-        </>
-      ) : (
-        <>
-          <Row label="Bridge WS URL">
-            <input value={rithmic.bridgeUrl} onChange={e => set({ bridgeUrl: e.target.value })}
-                   placeholder="ws://localhost:8787/"
-                   className="bg-panel2 border border-border rounded px-2 py-1 w-full" />
-          </Row>
-          <Row label="System">
-            <input value={rithmic.system} onChange={e => set({ system: e.target.value })}
-                   className="bg-panel2 border border-border rounded px-2 py-1 w-full" />
-          </Row>
-          <Row label="User">
-            <input value={rithmic.user} onChange={e => set({ user: e.target.value })}
-                   className="bg-panel2 border border-border rounded px-2 py-1 w-full" />
-          </Row>
-          <Row label="Password">
-            <input type="password" value={rithmic.password} onChange={e => set({ password: e.target.value })}
-                   className="bg-panel2 border border-border rounded px-2 py-1 w-full" />
-          </Row>
-        </>
-      )}
+          {rithmic.mode === "direct" ? (
+            <>
+              <Row label="Gateway">
+                <select value={rithmic.gateway} onChange={e => set({ gateway: e.target.value as RithmicGateway })}
+                        className="bg-bg border border-border rounded px-2 py-1">
+                  <option value="test">Test / Paper (rprotocol-mobile)</option>
+                  <option value="chicago">Chicago (rprotocol)</option>
+                  <option value="europe">Europe (rprotocol-europe)</option>
+                </select>
+              </Row>
+              <Row label="System">
+                <input value={rithmic.system} onChange={e => set({ system: e.target.value })}
+                       className="bg-bg border border-border rounded px-2 py-1 w-full" />
+              </Row>
+              <Row label="Exchange">
+                <select value={rithmic.exchange} onChange={e => set({ exchange: e.target.value })}
+                        className="bg-bg border border-border rounded px-2 py-1">
+                  {["CME", "CBOT", "NYMEX", "COMEX"].map(x => <option key={x} value={x}>{x}</option>)}
+                </select>
+              </Row>
+              <Row label="Contract">
+                <input value={rithmic.contract} onChange={e => set({ contract: e.target.value })}
+                       placeholder={`auto: ${front}`}
+                       className="bg-bg border border-border rounded px-2 py-1 w-full font-mono" />
+              </Row>
+              <p className="text-[10px] text-muted">
+                Auto-pick uses today's calendar to guess the front-month contract for the selected root.
+                Override only if you want a back month.
+              </p>
+            </>
+          ) : (
+            <Row label="Bridge WS URL">
+              <input value={rithmic.bridgeUrl} onChange={e => set({ bridgeUrl: e.target.value })}
+                     placeholder="ws://localhost:8787/"
+                     className="bg-bg border border-border rounded px-2 py-1 w-full" />
+            </Row>
+          )}
+        </div>
+      </details>
+
+      <p className="text-[10px] text-muted">
+        Don't have credentials? Free paper trading at <a className="underline" href="https://yyy3.rithmic.com" target="_blank" rel="noreferrer">yyy3.rithmic.com</a>. MSPA must be accepted once in R-Trader before market data flows.
+      </p>
     </div>
   );
 }
 
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="grid grid-cols-[120px_1fr] gap-2 items-center">
+    <div className="grid grid-cols-[110px_1fr] gap-2 items-center">
       <label className="text-muted">{label}</label>
       <div>{children}</div>
     </div>
