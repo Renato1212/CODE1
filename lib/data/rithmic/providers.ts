@@ -11,6 +11,8 @@ export interface ProviderPreset {
   label: string;
   gateway: "test" | "chicago" | "europe";
   system: string;
+  appName: string;            // Rithmic-side allowlisted app identifier
+  appVersion: string;
   hint?: string;
 }
 
@@ -19,43 +21,57 @@ export const RITHMIC_PROVIDERS: Record<RithmicProvider, ProviderPreset> = {
     label: "Rithmic Paper Trading",
     gateway: "test",
     system: "Rithmic Paper Trading",
+    appName: "Rithmic Test",
+    appVersion: "1.0.0.0",
     hint: "Free paper account from yyy3.rithmic.com",
   },
   "rithmic-live": {
     label: "Rithmic Live",
     gateway: "chicago",
     system: "Rithmic 01",
+    appName: "R | Trader Pro",
+    appVersion: "13.4.0.0",
     hint: "Direct Rithmic live account",
   },
   lucid: {
     label: "Lucid Trading",
     gateway: "chicago",
     system: "Rithmic 01",
+    appName: "Lucid Trading",
+    appVersion: "1.0.0.0",
     hint: "Usernames look like LT-XXXXXXXX",
   },
   topstep: {
     label: "Topstep",
     gateway: "chicago",
     system: "TopstepTrader",
+    appName: "Topstep",
+    appVersion: "1.0.0.0",
     hint: "Combine, Funded, or eval accounts",
   },
   apex: {
     label: "Apex Trader Funding",
     gateway: "chicago",
     system: "Rithmic Test",
+    appName: "Rithmic Test",
+    appVersion: "1.0.0.0",
     hint: "Apex evaluation / PA accounts",
   },
   amp: {
     label: "AMP Futures",
     gateway: "chicago",
     system: "Rithmic 01",
+    appName: "R | Trader Pro",
+    appVersion: "13.4.0.0",
     hint: "AMP direct Rithmic accounts",
   },
   custom: {
     label: "Custom",
     gateway: "test",
     system: "",
-    hint: "Pick your own gateway + system name",
+    appName: "",
+    appVersion: "1.0.0.0",
+    hint: "Pick your own gateway / system / app name",
   },
 };
 

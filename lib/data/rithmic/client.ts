@@ -21,6 +21,8 @@ export interface RithmicCredentials {
   system: string;        // e.g. "Rithmic Paper Trading"
   user: string;
   password: string;
+  appName?: string;      // Rithmic-side allowlisted app identifier
+  appVersion?: string;
 }
 
 export interface RithmicSubscription {
@@ -106,7 +108,11 @@ export class RithmicClient {
       this.debug("[rithmic] ws error");
     };
     ws.onclose = (e) => {
-      this.debug(`[rithmic] close code=${e.code} reason=${e.reason || "—"}`);
+      let hint = "";
+      if (e.code === 1011 && /permission/i.test(e.reason || "")) {
+        hint = ` — app_name "${this.creds.appName ?? ""}" not allowlisted for system "${this.creds.system}"; try a different provider preset or set Advanced → App name`;
+      }
+      this.debug(`[rithmic] close code=${e.code} reason=${e.reason || "—"}${hint}`);
       if (this.hbTimer) { clearInterval(this.hbTimer); this.hbTimer = null; }
       this.h.onStatus("closed");
       if (!this.closed) this.scheduleReconnect();
@@ -128,13 +134,16 @@ export class RithmicClient {
   }
 
   private sendLogin() {
+    const appName = this.creds.appName || "Rithmic Test";
+    const appVersion = this.creds.appVersion || "1.0.0.0";
+    this.debug(`[rithmic] login user=${this.creds.user} system="${this.creds.system}" app="${appName}" v${appVersion}`);
     this.send(RequestLogin, {
       template_id: TEMPLATE.RequestLogin,
       template_version: "3.9",
       user: this.creds.user,
       password: this.creds.password,
-      app_name: "tapefeel:1.0",
-      app_version: "1.0.0",
+      app_name: appName,
+      app_version: appVersion,
       system_name: this.creds.system,
       infra_type: INFRA_TYPE.TICKER_PLANT,
       aggregated_quotes: false,
@@ -174,14 +183,16 @@ export class RithmicClient {
       switch (tid) {
         case TEMPLATE.ResponseLogin: {
           const m: any = ResponseLogin.decode(buf);
-          const ok = !m.rp_code || m.rp_code.length === 0 || m.rp_code[0] === "0";
+          const rp = m.rp_code ?? [];
+          const ok = rp.length === 0 || rp[0] === "0";
           this.hbInterval = (m.heartbeat_interval ?? 30) * 1000;
-          this.debug(`[rithmic] login ${ok ? "OK" : "FAIL"} rp_code=${(m.rp_code ?? []).join(",")} hb=${this.hbInterval}ms`);
+          const um = (m.user_msg ?? []).join(" | ");
+          this.debug(`[rithmic] login ${ok ? "OK" : "FAIL"} rp_code=[${rp.join(",")}]${um ? " msg=" + um : ""} hb=${this.hbInterval}ms`);
           if (ok) {
             this.startHeartbeat();
             this.sendSubscribe();
           } else {
-            this.lastError = `login failed: ${(m.rp_code ?? []).join(",")} ${(m.user_msg ?? []).join(" ")}`;
+            this.lastError = `login failed: rp=${rp.join(",")} ${um}`;
             try { this.ws?.close(); } catch {}
           }
           break;
@@ -189,7 +200,9 @@ export class RithmicClient {
         case TEMPLATE.ResponseHeartbeat: break;
         case TEMPLATE.ResponseMarketDataUpdate: {
           const m: any = ResponseMarketDataUpdate.decode(buf);
-          this.debug(`[rithmic] sub ack rp_code=${(m.rp_code ?? []).join(",")}`);
+          const rp = m.rp_code ?? [];
+          const um = (m.user_msg ?? []).join(" | ");
+          this.debug(`[rithmic] sub ack rp_code=[${rp.join(",")}]${um ? " msg=" + um : ""}`);
           break;
         }
         case TEMPLATE.BestBidOffer: {
@@ -228,7 +241,7 @@ export class RithmicClient {
           break;
         }
         default:
-          this.debug(`[rithmic] unhandled template_id=${tid}`);
+          this.debug(`[rithmic] unhandled template_id=${tid} len=${buf.length}`);
       }
     } catch (e: any) {
       this.errorCount++;
