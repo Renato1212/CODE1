@@ -1,0 +1,2 @@
+async-rithmic>=1.5.0
+websockets>=12.0

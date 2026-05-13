@@ -1,0 +1,15 @@
+services:
+  tapefeel-rithmic:
+    build: .
+    container_name: tapefeel-rithmic
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    environment:
+      LISTEN_HOST: 0.0.0.0
+      LISTEN_PORT: 8787
+      RITHMIC_SYSTEM: ${RITHMIC_SYSTEM:-Rithmic Paper Trading}
+      RITHMIC_GATEWAY: ${RITHMIC_GATEWAY:-TEST}
+      RITHMIC_USER: ${RITHMIC_USER}
+      RITHMIC_PASSWORD: ${RITHMIC_PASSWORD}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
