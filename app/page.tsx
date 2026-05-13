@@ -12,7 +12,7 @@ import {
 import { simpleAudio } from "@/lib/audio/simple";
 import PriceLadder from "@/components/PriceLadder";
 
-const BUILD = "v7-rithmic-appname-2026-05-11";
+const BUILD = "v8-rithmic-rawhex-2026-05-11";
 const SOURCES: { value: FeedSource; label: string }[] = [
   { value: "binance", label: "Binance Futures (crypto)" },
   { value: "coinbase", label: "Coinbase Spot (crypto)" },
@@ -369,7 +369,19 @@ export default function Page() {
         </div>
       )}
 
-      {lastDebug && <div className="text-[10px] text-muted px-1 break-all">debug: {lastDebug} · build {BUILD}</div>}
+      {lastDebug && (
+        <div className="text-[10px] text-muted px-1 break-all flex items-start gap-2">
+          <span className="flex-1">debug: {lastDebug} · build {BUILD}</span>
+          {rithmicClientRef.current && (
+            <button className="btn shrink-0" onClick={() => {
+              const log = rithmicClientRef.current?.rawLog ?? [];
+              const text = log.join("\n");
+              navigator.clipboard?.writeText(text).catch(() => {});
+              setLastDebug(`copied ${log.length} lines of raw protocol trace to clipboard`);
+            }}>copy raw trace</button>
+          )}
+        </div>
+      )}
 
       <PriceLadder trades={trades} lastPrice={lastPrice} tickSize={tickValue} windowMs={LADDER_WINDOW_MS} rows={19} />
 
